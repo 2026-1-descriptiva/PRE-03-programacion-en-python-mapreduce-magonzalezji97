@@ -2,7 +2,7 @@
 
 # pylint: disable=broad-exception-raised
 
-
+import fileinput
 import glob
 import os.path
 import string
@@ -14,86 +14,112 @@ import time
 # de ejemplo que se encuentran en la carpeta files/raw.
 
 
-# Crea la carpeta files/input
-if os.path.exists("files/input/"):
-    for file in glob.glob("files/input/*"):
-        os.remove(file)
-else:
-    os.makedirs("files/input")
+def clear_folder(folder):
+    if os.path.exists(folder):
+        for file in glob.glob(f"{folder}*"):
+            os.remove(file)
 
 
-# Copia n=100 veces los archivos de files/raw a files/input
-n = 1000
-
-for file in glob.glob("files/raw/*"):
-
-    with open(file, "r", encoding="utf-8") as f:
-        text = f.read()
-
-    for i in range(1, n + 1):
-        raw_filename_with_extension = os.path.basename(file)
-        raw_filename_without_extension = os.path.splitext(raw_filename_with_extension)[
-            0
-        ]
-        new_filename = f"{raw_filename_without_extension}_{i}.txt"
-        with open(f"files/input/{new_filename}", "w", encoding="utf-8") as f2:
-            f2.write(text)
+def initialize_folder(folder):
+    if os.path.exists(folder):
+        clear_folder(folder)
+    else:
+        os.makedirs(folder)
 
 
-# El experimento realmente empieza en este punto.
-start_time = time.time()
+def delete_folder(folder):
+    if os.path.exists(folder):
+        clear_folder(folder)
+        os.rmdir(folder)
 
 
-# Lee los archivos de files/input
-sequence = []
-files = glob.glob("files/input/*")
-for file in files:
-    with open(file, "r", encoding="utf-8") as f:
-        for line in f:
-            sequence.append((file, line))
+def generate_file_copies(n):
+
+    for file in glob.glob("files/raw/*"):
+        with open(file, "r", encoding="utf-8") as f:
+            text = f.read()
+
+        for i in range(1, n + 1):
+            raw_filename_with_extension = os.path.basename(file)
+            raw_filename_without_extension = os.path.splitext(
+                raw_filename_with_extension
+            )[0]
+            new_filename = f"{raw_filename_without_extension}_{i}.txt"
+            with open(f"files/input/{new_filename}", "w", encoding="utf-8") as f2:
+                f2.write(text)
 
 
 # Mapea las líneas a pares (palabra, 1). Este es el mapper.
-pairs_sequence = []
-for _, line in sequence:
-    line = line.lower()
-    line = line.translate(str.maketrans("", "", string.punctuation))
-    line = line.replace("\n", "")
-    words = line.split()
-    pairs_sequence.extend([(word, 1) for word in words])
-
-
-# Ordena la secuencia de pares por la palabra. Este es el shuffle and sort.
-pairs_sequence = sorted(pairs_sequence)
+def mapper(sequence):
+    pairs_sequence = []
+    for _, line in sequence:
+        line = line.lower()
+        line = line.translate(str.maketrans("", "", string.punctuation))
+        line = line.replace("\n", "")
+        words = line.split()
+        pairs_sequence.extend([(word, 1) for word in words])
+    return pairs_sequence
 
 
 # Reduce la secuencia de pares sumando los valores por cada palabra. Este es el reducer.
-result = []
-for key, value in pairs_sequence:
-    if result and result[-1][0] == key:
-        result[-1] = (key, result[-1][1] + value)
-    else:
-        result.append((key, value))
+def reducer(pairs_sequence):
+    result = []
+    for key, value in pairs_sequence:
+        if result and result[-1][0] == key:
+            result[-1] = (key, result[-1][1] + value)
+        else:
+            result.append((key, value))
+    return result
 
 
-# Crea la carpeta files/output
-if os.path.exists("files/output/"):
-    for file in glob.glob(f"files/output/*"):
-        os.remove(file)
-else:
-    os.makedirs("files/output")
+def hadoop(input_folder, output_folder, mapper_fn, reducer_fn):
 
-# Guarda el resultado en un archivo files/output/part-00000
-with open("files/output/part-00000", "w", encoding="utf-8") as f:
-    for key, value in result:
-        f.write(f"{key}\t{value}\n")
+    def read_records_from_input(input_folder):
+        sequence = []
+        files = glob.glob(f"{input_folder}*")
+        for file in files:
+            with open(file, "r", encoding="utf-8") as f:
+                for line in f:
+                    sequence.append((file, line))
+        return sequence
+
+    def save_results_to_output(result):
+        with open("files/output/part-00000", "w", encoding="utf-8") as f:
+            for key, value in result:
+                f.write(f"{key}\t{value}\n")
+
+    def create_success_file(output_folder):
+        with open(os.path.join(output_folder, "_SUCCESS"), "w", encoding="utf-8") as f:
+            f.write("")
+
+    def create_output_directory(output_folder):
+        if os.path.exists(output_folder):
+            raise FileExistsError(f"The folder '{output_folder}' already exists.")
+        else:
+            os.makedirs(output_folder)
+
+    sequence = read_records_from_input(input_folder)
+    pairs_sequence = mapper_fn(sequence)
+    pairs_sequence = sorted(pairs_sequence)
+    result = reducer_fn(pairs_sequence)
+    create_output_directory(output_folder)
+    save_results_to_output(result)
+    create_success_file(output_folder)
 
 
-# Crea el archivo _SUCCESS en files/output
-with open("files/output/_SUCCESS", "w", encoding="utf-8") as f:
-    f.write("")
+if __name__ == "__main__":
 
+    initialize_folder("files/input/")
+    delete_folder("files/output/")
+    generate_file_copies(5000)
+    start_time = time.time()
 
-# El experimento finaliza aquí.
-end_time = time.time()
-print(f"Tiempo de ejecución: {end_time - start_time:.2f} segundos")
+    hadoop(
+        input_folder="files/input/",
+        output_folder="files/output/",
+        mapper_fn=mapper,
+        reducer_fn=reducer,
+    )
+
+    end_time = time.time()
+    print(f"Tiempo de ejecución: {end_time - start_time:.2f} segundos")
